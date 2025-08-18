@@ -661,7 +661,7 @@ ggsave("figure3_methlevels_hist.png", plot = methlevels_hist, width = 8, height 
 
 
 
-
+#bin 50
 
 #combine tsv
 library(dplyr)

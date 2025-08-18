@@ -159,5 +159,24 @@ Background pi (SL): 0.00448732
 
 
 
+#Say
+# 1. 排除 chrY 和 chrUn
+grep -v -E 'chrY|chrUn' /work/cyu/meth/pooldata/pileup/17_SAY.pileup > /work/cyu/meth/pooldata/pileup/17_SAT_noYUn.pileup
 
+# 2. 计算窗口 π
+perl Variance-sliding.pl \
+    --input /work/cyu/meth/pooldata/pileup/17_SAT_noYUn.pileup \
+    --window-size 10000 \
+    --step-size 10000 \
+    --min-count 2 \
+    --min-coverage 4 \
+    --max-coverage 5000 \
+    --min-qual 20 \
+    --measure pi \
+    --output /work/cyu/meth/SAY_10kb_nostep_pi.txt \
+    --pool-size 200 \
+    --fastq-type sanger
 
+# 3. 计算 genome-wide 平均 π
+awk '{sum += $5; n++} END {if (n > 0) print "Background pi (SAY):", sum / n; else print "No data"}' /work/cyu/meth/SAY_10kb_nostep_pi.txt
+Background pi (SAY): 
