@@ -179,4 +179,4 @@ perl Variance-sliding.pl \
 
 # 3. 计算 genome-wide 平均 π
 awk '{sum += $5; n++} END {if (n > 0) print "Background pi (SAY):", sum / n; else print "No data"}' /work/cyu/meth/SAY_10kb_nostep_pi.txt
-Background pi (SAY): 
+Background pi (SAY): 0.00514214

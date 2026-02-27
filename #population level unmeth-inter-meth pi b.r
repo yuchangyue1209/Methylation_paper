@@ -292,9 +292,9 @@ import os
 
 # 输入文件及对应的甲基化类型
 methylation_files = {
-    "WK_Intersection_Inter.tsv.gz": "inter",
-    "WK_Intersection_Meth.tsv.gz": "meth",
-    "WK_Intersection_Unmeth.tsv.gz": "unmeth"
+    "WGBS_WK_Intersection_Inter.tsv.gz": "inter",
+    "WGBS_WK_Intersection_Meth.tsv.gz": "meth",
+    "WGBS_WK_Intersection_Unmeth.tsv.gz": "unmeth"
 }
 
 gtf_rows = []
@@ -331,16 +331,16 @@ for fname, label in methylation_files.items():
 # 写出 GTF 文件
 if gtf_rows:
     gtf_df = pd.DataFrame(gtf_rows)
-    gtf_df.to_csv("WK_intermethunmeth.gtf", sep="\t", index=False, header=False, quoting=3)
-    print("✅ GTF 文件已生成：WK_intermethunmeth.gtf")
+    gtf_df.to_csv("WGBS_WK_intermethunmeth.gtf", sep="\t", index=False, header=False, quoting=3)
+    print("✅ GTF 文件已生成：WGBS_WK_intermethunmeth.gtf")
 else:
     print("⚠️ 没有生成任何 GTF 内容，请检查输入文件")
 
 
 perl Variance-at-position.pl --pool-size 198 --min-qual 20 --min-coverage 3 --min-count 2 --fastq-type sanger \
         --pileup /work/cyu/meth/pooldata/pileup/8_WK.pileup \
-        --gtf /work/cyu/meth/Wik/WK_intermethunmeth.gtf \
-        --output /work/cyu/meth/Wik/WK_intermethunmeth.pi.txt \
+        --gtf /work/cyu/meth/Wik/WGBS_WK_intermethunmeth.gtf \
+        --output /work/cyu/meth/Wik/WGBS_WK_intermethunmeth.pi.txt \
         --measure pi
 
 
@@ -398,8 +398,8 @@ else:
 
 perl Variance-at-position.pl --pool-size 198 --min-qual 20 --min-coverage 3 --min-count 2 --fastq-type sanger \
         --pileup /work/cyu/meth/pooldata/pileup/8_WK.pileup \
-        --gtf /work/cyu/meth/Wik/WK_intermethunmeth_WGBS.gtf \
-        --output /work/cyu/meth/Wik/WK_intermethunmeth.pi.txt \
+        --gtf /work/cyu/meth/Wik/WK_intermethunmeth.gtf \
+        --output /work/cyu/meth/Wik/WGBS_WK_intermethunmeth.pi.txt \
         --measure pi
 
 
@@ -461,7 +461,7 @@ else:
 perl Variance-at-position.pl --pool-size 184 --min-qual 20 --min-coverage 3 --min-count 2 --fastq-type sanger \
         --pileup /work/cyu/meth/pooldata/pileup/7_WT.pileup \
         --gtf /work/cyu/meth/Watson/WT_intermethunmeth_WGBS.gtf \
-        --output /work/cyu/meth/Watson/WT_intermethunmeth.pi.txt \
+        --output /work/cyu/meth/Watson/WGBS_WT_intermethunmeth.pi.txt \
         --measure pi
 
 Background pi (WT): 0.00468986
@@ -524,7 +524,7 @@ perl Variance-at-position.pl --pool-size 200 --min-qual 20 --min-coverage 3 --mi
         --output /work/cyu/meth/Sayward/ReducedSamples/SAY_intermethunmeth.pi.txt \
         --measure pi
 
-Background pi (SAY): 
+Background pi (SAY): 0.00514214
 
 
 
@@ -631,3 +631,182 @@ print(p)
 
 # 保存图像
 ggsave("RS_bigtext_methylation_pi_boxplot.png", p, width = 8, height = 6, dpi = 300)
+
+
+
+
+
+
+
+
+#wgbs wik
+import pandas as pd
+import gzip
+import os
+
+# 输入文件及其对应 methylation 类型标签
+methylation_files = {
+    "WGBS_WK_Intersection_Inter.tsv.gz": "inter",
+    "WGBS_WK_Intersection_Meth.tsv.gz": "meth",
+    "WGBS_WK_Intersection_Unmeth.tsv.gz": "unmeth"
+}
+
+gtf_rows = []
+
+for fname, label in methylation_files.items():
+    if os.path.exists(fname):
+        print(f"Reading {fname}...")
+        with gzip.open(fname, "rt") as f:
+            df = pd.read_csv(f, sep="\t", header=0)
+            for idx, row in df.iterrows():
+                chrom_pos = row["chr"]  # e.g. "chrI.1001661"
+                if "." not in chrom_pos:
+                    print(f"⚠️ Skipping malformed row: {chrom_pos}")
+                    continue
+                chrom, pos = chrom_pos.split(".")
+                start = int(pos)
+                end = start
+
+                gtf_row = [
+                    chrom,
+                    "none",
+                    "transcript",
+                    start,
+                    end,
+                    ".",
+                    "+",
+                    ".",
+                    f'gene_id "{chrom}_{label}";'
+                ]
+                gtf_rows.append(gtf_row)
+    else:
+        print(f"❌ File not found: {fname}")
+
+# 写入 GTF 文件
+if gtf_rows:
+    gtf_df = pd.DataFrame(gtf_rows)
+    gtf_df.to_csv("WK_intermethunmeth_WGBS.gtf", sep="\t", index=False, header=False, quoting=3)
+    print("✅ GTF 文件已生成：WK_intermethunmeth_WGBS.gtf")
+else:
+    print("⚠️ 没有生成任何 GTF 内容，请检查输入文件")
+
+
+perl Variance-at-position.pl --pool-size 198 --min-qual 20 --min-coverage 3 --min-count 2 --fastq-type sanger \
+        --pileup /work/cyu/meth/pooldata/pileup/8_WK.pileup \
+        --gtf /work/cyu/meth/Wik/WK_intermethunmeth.gtf \
+        --output /work/cyu/meth/Wik/WGBS_WK_intermethunmeth.pi.txt \
+        --measure pi
+
+
+ackground pi (WK): 0.00405137
+
+
+
+#wgbs wt
+
+perl Variance-at-position.pl --pool-size 184 --min-qual 20 --min-coverage 3 --min-count 2 --fastq-type sanger \
+        --pileup /work/cyu/meth/pooldata/pileup/7_WT.pileup \
+        --gtf /work/cyu/meth/Watson/WT_intermethunmeth_WGBS.gtf \
+        --output /work/cyu/meth/Watson/WGBS_WT_intermethunmeth.pi.txt \
+        --measure pi
+
+Background pi (WT): 0.00468986
+
+
+# ---- reusable boxplot function for π by methylation category ----
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+
+# 可选：显著性标注包；没有也能跑
+has_signif <- requireNamespace("ggsignif", quietly = TRUE)
+if (has_signif) library(ggsignif)
+
+plot_meth_pi <- function(infile, outfile, bg_pi, title_text) {
+  # 1) 读取
+  dat <- read.table(infile, sep = "\t", header = FALSE, stringsAsFactors = FALSE)
+  colnames(dat) <- c("chr_result", "col2", "col3", "statValue")
+
+  # 2) 预处理
+  dat <- separate(dat, col = "chr_result", into = c("chr","result"),
+                  sep = "_", remove = TRUE)
+  dat <- dplyr::filter(dat, !(chr %in% c("chrUn","chrM")))
+  dat$result  <- factor(dat$result, levels = c("unmeth","inter","meth"))
+  dat$sex_chr <- ifelse(dat$chr == "chrY", "sex", "autosome")
+  dat$statValue[dat$statValue == "NaN"] <- NA
+  dat$statValue <- as.numeric(dat$statValue)
+  dat <- dat[!is.na(dat$statValue), ]
+
+  # 3) Wilcoxon 两两比较
+  comps <- combn(levels(dat$result), 2, simplify = FALSE)
+  wtres <- lapply(comps, function(comp){
+    x <- dplyr::filter(dat, result==comp[1]) |> dplyr::pull(statValue)
+    y <- dplyr::filter(dat, result==comp[2]) |> dplyr::pull(statValue)
+    w <- wilcox.test(x, y, paired = FALSE, exact = FALSE)
+    data.frame(group1=comp[1], group2=comp[2], W=unname(w$statistic), p.value=w$p.value)
+  }) |> dplyr::bind_rows()
+  print(wtres)
+
+  # 4) 作图
+  max_val <- max(dat$statValue, na.rm = TRUE)
+
+  p <- ggplot(dat, aes(x = result, y = statValue, fill = result)) +
+    geom_boxplot(outlier.shape = NA, width = 0.6, alpha = 0.7) +
+    geom_jitter(width = 0.15, alpha = 0.8, size = 2,
+                aes(shape = sex_chr, color = sex_chr)) +
+    geom_hline(yintercept = bg_pi, linetype = "dotted", color = "black", size = 0.6) +
+    scale_shape_manual(values = c("autosome" = 21, "sex" = 24)) +
+    scale_color_manual(values = c("autosome" = "black", "sex" = "red")) +
+    theme_bw() +
+    labs(x = "Methylation Category", y = expression(pi),
+         title = title_text) +
+    theme(legend.position = "right")
+
+  if (has_signif) {
+    p <- p + geom_signif(
+      comparisons = comps,
+      annotations = format.pval(wtres$p.value, digits = 2, eps = 0.001),
+      y_position = seq(from = max_val * 1.05,
+                       length.out = length(comps),
+                       by = max_val * 0.03),
+      tip_length = 0.02, textsize = 4
+    )
+  } else {
+    # 无 ggsignif：手动画横线与 p 值
+    levs  <- levels(dat$result)
+    pos_y <- seq(from = max_val * 1.05,
+                 length.out = nrow(wtres),
+                 by = max_val * 0.03)
+    for (i in seq_len(nrow(wtres))) {
+      g1 <- wtres$group1[i]; g2 <- wtres$group2[i]
+      x1 <- which(levs == g1); x2 <- which(levs == g2)
+      y  <- pos_y[i]
+      lab <- format.pval(wtres$p.value[i], digits = 2, eps = 0.001)
+      p <- p +
+        geom_segment(aes(x = x1, xend = x2, y = y, yend = y)) +
+        geom_segment(aes(x = x1, xend = x1, y = y, yend = y - max_val*0.01)) +
+        geom_segment(aes(x = x2, xend = x2, y = y, yend = y - max_val*0.01)) +
+        annotate("text", x = (x1 + x2)/2, y = y + max_val*0.01, label = lab, size = 4)
+    }
+  }
+
+  print(p)
+  ggsave(filename = outfile, plot = p, width = 8, height = 6, dpi = 300)
+  message("Saved: ", outfile)
+}
+
+# =========================
+# 使用示例（与你WT脚本完全等价）
+plot_meth_pi("/work/cyu/meth/Wik/WGBS_WK_intermethunmeth.pi.txt",
+              "/work/cyu/meth/Wik/WK_methylation_pi_boxplot.png",
+             0.00405137,
+            "Nucleotide Diversity by Methylation State (WK)")
+# plot_meth_pi("/work/cyu/meth/Sayward/ReducedSamples/SAY_intermethunmeth.pi.txt",
+#              "/work/cyu/meth/Sayward/ReducedSamples/SAY_methylation_pi_boxplot.png",
+#              0.00514214,
+#              "Nucleotide Diversity by Methylation State (SAY)")
+# plot_meth_pi("RS_intermethunmeth.pi.txt",
+#              "RS_methylation_pi_boxplot.png",
+#              0.00483154,
+#              "Nucleotide Diversity by Methylation State (RS)")
+
