@@ -1939,3 +1939,1004 @@ Warning messages:
 
 ALL DONE
 (base) cyu@stickleback:/work/cyu/meth$ 
+
+
+
+#violin 发表版 不加ab clean
+#!/usr/bin/env Rscript
+
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(dplyr)
+})
+
+# =========================================================
+# helper: read and filter one pi file
+# =========================================================
+read_pi <- function(path, pop, cat) {
+  df <- read.table(path, header = FALSE, stringsAsFactors = FALSE)
+  colnames(df) <- c("island", "n_valid", "p3", "pi")
+  
+  df$n_valid <- suppressWarnings(as.integer(df$n_valid))
+  df$pi      <- suppressWarnings(as.numeric(df$pi))
+  
+  # keep only islands used in analysis
+  df <- df[df$n_valid >= 2 & !is.na(df$pi), ]
+  
+  df$pop <- pop
+  df$cat <- cat
+  df
+}
+
+# =========================================================
+# helper: make one comparison plot + QC + Tukey
+# =========================================================
+plot_one_group <- function(base_dir, files, out_prefix, pop_order, pop_colors) {
+  
+  # -------------------------
+  # read all files
+  # -------------------------
+  all_df <- data.frame()
+  
+  for (x in files) {
+    fpath <- file.path(base_dir, x$file)
+    if (!file.exists(fpath)) stop("Missing file: ", fpath)
+    tmp <- read_pi(fpath, x$pop, x$cat)
+    all_df <- rbind(all_df, tmp)
+  }
+  
+  # factor order
+  all_df$cat <- factor(all_df$cat, levels = c("non", "hypo", "hyper"))
+  all_df$pop <- factor(all_df$pop, levels = pop_order)
+  
+  # -------------------------
+  # QC table
+  # -------------------------
+  qc <- all_df %>%
+    group_by(pop, cat) %>%
+    summarise(
+      n_islands = n(),
+      sum_valid_sites = sum(n_valid, na.rm = TRUE),
+      mean_valid_sites_per_island = mean(n_valid, na.rm = TRUE),
+      median_pi = median(pi, na.rm = TRUE),
+      mean_pi = mean(pi, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  message("\n[QC] ", out_prefix)
+  print(qc)
+  
+  # -------------------------
+  # overall Tukey across pop × category groups
+  # -------------------------
+  all_df$group <- interaction(all_df$pop, all_df$cat, sep = ".")
+  
+  fit_all <- aov(pi ~ group, data = all_df)
+  tuk_all <- TukeyHSD(fit_all)
+  
+  tuk_all_df <- as.data.frame(tuk_all$group)
+  tuk_all_df$comparison <- rownames(tuk_all_df)
+  rownames(tuk_all_df) <- NULL
+  tuk_all_df$out_prefix <- out_prefix
+  
+  message("\n[Tukey overall] ", out_prefix)
+  print(tuk_all_df)
+  
+  # -------------------------
+  # within-category Tukey: compare the two populations inside each cat
+  # -------------------------
+  tuk_cat_list <- list()
+  
+  for (cc in levels(all_df$cat)) {
+    sub <- all_df[all_df$cat == cc, ]
+    
+    # only run if both pops exist
+    if (length(unique(sub$pop)) >= 2) {
+      fit_cat <- aov(pi ~ pop, data = sub)
+      tuk_cat <- TukeyHSD(fit_cat)
+      
+      tmp <- as.data.frame(tuk_cat$pop)
+      tmp$comparison <- rownames(tmp)
+      rownames(tmp) <- NULL
+      tmp$cat <- cc
+      tmp$out_prefix <- out_prefix
+      tuk_cat_list[[cc]] <- tmp
+      
+      message("\n[Tukey within category: ", cc, "] ", out_prefix)
+      print(tmp)
+    }
+  }
+  
+  tuk_cat_df <- bind_rows(tuk_cat_list)
+  
+  # -------------------------
+  # plot
+  # -------------------------
+  dodge_w <- 0.78
+  vio_w   <- 0.72
+  box_w   <- 0.12
+  
+  p <- ggplot(all_df, aes(x = cat, y = pi, fill = pop)) +
+    geom_violin(
+      position  = position_dodge(width = dodge_w),
+      width     = vio_w,
+      trim      = TRUE,
+      scale     = "width",
+      alpha     = 0.90,
+      linewidth = 0.3
+    ) +
+    geom_boxplot(
+      width = box_w,
+      outlier.shape = NA,
+      position = position_dodge(width = dodge_w),
+      linewidth = 0.3
+    ) +
+    scale_fill_manual(values = pop_colors, breaks = pop_order) +
+    labs(
+      title = NULL,
+      x = NULL,
+      y = "Per-island pi",
+      fill = "Population"
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      legend.position = "top",
+      plot.title = element_blank()
+    )
+  
+  pdf_out <- file.path(base_dir, paste0(out_prefix, ".pdf"))
+  png_out <- file.path(base_dir, paste0(out_prefix, ".png"))
+  qc_out  <- file.path(base_dir, paste0(out_prefix, "_QC.tsv"))
+  tuk_all_out <- file.path(base_dir, paste0(out_prefix, "_Tukey_all.tsv"))
+  tuk_cat_out <- file.path(base_dir, paste0(out_prefix, "_Tukey_withinCategory.tsv"))
+  
+  # show plot in interactive session
+  print(p)
+  
+  # save plot files
+  ggsave(filename = pdf_out, plot = p, width = 10, height = 5, useDingbats = FALSE)
+  ggsave(filename = png_out, plot = p, width = 10, height = 5, dpi = 300)
+  
+  message("Saved plot: ", pdf_out)
+  message("Saved plot: ", png_out)
+  
+  # save tables
+  write.table(qc, qc_out, sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(tuk_all_df, tuk_all_out, sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(tuk_cat_df, tuk_cat_out, sep = "\t", quote = FALSE, row.names = FALSE)
+  
+  message("Saved QC table: ", qc_out)
+  message("Saved Tukey table: ", tuk_all_out)
+  message("Saved Tukey within-category table: ", tuk_cat_out)
+  
+  invisible(list(
+    plot = p,
+    qc = qc,
+    tukey_all = tuk_all_df,
+    tukey_within_cat = tuk_cat_df,
+    data = all_df
+  ))
+}
+
+# =========================================================
+# color palette for named populations
+# =========================================================
+pop_palette <- c(
+  "Rabbit Slough" = "#00BFC4",
+  "Sayward"       = "#00BFC4",
+  "Gosling"       = "#F8766D",
+  "Roberts"       = "#F8766D",
+  "Watson"        = "#F8766D",
+  "Wik"           = "#F8766D"
+)
+
+# =========================================================
+# 1) RS vs GOS
+# =========================================================
+base_dir <- "/work/cyu/meth/RSvsGos"
+files <- list(
+  list(pop = "Rabbit Slough", cat = "non",   file = "RS_RSvsGOS_pi_non_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hypo",  file = "RS_RSvsGOS_pi_hypo_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hyper", file = "RS_RSvsGOS_pi_hyper_islands_5k.txt"),
+  list(pop = "Gosling",       cat = "non",   file = "GOS_RSvsGOS_pi_non_islands_5k.txt"),
+  list(pop = "Gosling",       cat = "hypo",  file = "GOS_RSvsGOS_pi_hypo_islands_5k.txt"),
+  list(pop = "Gosling",       cat = "hyper", file = "GOS_RSvsGOS_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_RSvsGOS_5kb_pi_validNge2_namedPop",
+  pop_order = c("Gosling", "Rabbit Slough"),
+  pop_colors = pop_palette[c("Gosling", "Rabbit Slough")]
+)
+
+# =========================================================
+# 2) RS vs ROB
+# =========================================================
+base_dir <- "/work/cyu/meth/RSvsRob"
+files <- list(
+  list(pop = "Rabbit Slough", cat = "non",   file = "RS_RSvsROB_pi_non_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hypo",  file = "RS_RSvsROB_pi_hypo_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hyper", file = "RS_RSvsROB_pi_hyper_islands_5k.txt"),
+  list(pop = "Roberts",       cat = "non",   file = "ROB_RSvsROB_pi_non_islands_5k.txt"),
+  list(pop = "Roberts",       cat = "hypo",  file = "ROB_RSvsROB_pi_hypo_islands_5k.txt"),
+  list(pop = "Roberts",       cat = "hyper", file = "ROB_RSvsROB_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_RSvsROB_5kb_pi_validNge2_namedPop",
+  pop_order = c("Roberts", "Rabbit Slough"),
+  pop_colors = pop_palette[c("Roberts", "Rabbit Slough")]
+)
+
+# =========================================================
+# 3) RS vs WT
+# =========================================================
+base_dir <- "/work/cyu/meth/RSvsWat"
+files <- list(
+  list(pop = "Rabbit Slough", cat = "non",   file = "RS_RSWGBSWT_pi_non_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hypo",  file = "RS_RSWGBSWT_pi_hypo_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hyper", file = "RS_RSWGBSWT_pi_hyper_islands_5k.txt"),
+  list(pop = "Watson",        cat = "non",   file = "WGBSWT_RSWGBSWT_pi_non_islands_5k.txt"),
+  list(pop = "Watson",        cat = "hypo",  file = "WGBSWT_RSWGBSWT_pi_hypo_islands_5k.txt"),
+  list(pop = "Watson",        cat = "hyper", file = "WGBSWT_RSWGBSWT_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_RSvsWT_5kb_pi_validNge2_namedPop",
+  pop_order = c("Watson", "Rabbit Slough"),
+  pop_colors = pop_palette[c("Watson", "Rabbit Slough")]
+)
+
+# =========================================================
+# 4) RS vs WK
+# =========================================================
+base_dir <- "/work/cyu/meth/RSvsWik"
+files <- list(
+  list(pop = "Rabbit Slough", cat = "non",   file = "RS_RSWGBSWK_pi_non_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hypo",  file = "RS_RSWGBSWK_pi_hypo_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hyper", file = "RS_RSWGBSWK_pi_hyper_islands_5k.txt"),
+  list(pop = "Wik",           cat = "non",   file = "WK_RSWGBSWK_pi_non_islands_5k.txt"),
+  list(pop = "Wik",           cat = "hypo",  file = "WK_RSWGBSWK_pi_hypo_islands_5k.txt"),
+  list(pop = "Wik",           cat = "hyper", file = "WK_RSWGBSWK_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_RSvsWK_5kb_pi_validNge2_namedPop",
+  pop_order = c("Wik", "Rabbit Slough"),
+  pop_colors = pop_palette[c("Wik", "Rabbit Slough")]
+)
+
+# =========================================================
+# 5) SAY vs GOS
+# =========================================================
+base_dir <- "/work/cyu/meth/SayvsGos"
+files <- list(
+  list(pop = "Sayward", cat = "non",   file = "SAY_SayGos_pi_non_islands_5k.txt"),
+  list(pop = "Sayward", cat = "hypo",  file = "SAY_SayGos_pi_hypo_islands_5k.txt"),
+  list(pop = "Sayward", cat = "hyper", file = "SAY_SayGos_pi_hyper_islands_5k.txt"),
+  list(pop = "Gosling", cat = "non",   file = "GOS_SayGos_pi_non_islands_5k.txt"),
+  list(pop = "Gosling", cat = "hypo",  file = "GOS_SayGos_pi_hypo_islands_5k.txt"),
+  list(pop = "Gosling", cat = "hyper", file = "GOS_SayGos_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_SAYvsGOS_5kb_pi_validNge2_namedPop",
+  pop_order = c("Gosling", "Sayward"),
+  pop_colors = pop_palette[c("Gosling", "Sayward")]
+)
+
+# =========================================================
+# 6) SAY vs ROB
+# =========================================================
+base_dir <- "/work/cyu/meth/SayvsRob"
+files <- list(
+  list(pop = "Sayward", cat = "non",   file = "SAY_SayRob_pi_non_islands_5k.txt"),
+  list(pop = "Sayward", cat = "hypo",  file = "SAY_SayRob_pi_hypo_islands_5k.txt"),
+  list(pop = "Sayward", cat = "hyper", file = "SAY_SayRob_pi_hyper_islands_5k.txt"),
+  list(pop = "Roberts", cat = "non",   file = "ROB_SayRob_pi_non_islands_5k.txt"),
+  list(pop = "Roberts", cat = "hypo",  file = "ROB_SayRob_pi_hypo_islands_5k.txt"),
+  list(pop = "Roberts", cat = "hyper", file = "ROB_SayRob_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_SAYvsROB_5kb_pi_validNge2_namedPop",
+  pop_order = c("Roberts", "Sayward"),
+  pop_colors = pop_palette[c("Roberts", "Sayward")]
+)
+
+cat("\nALL DONE\n")
+
+
+
+
+
+#violin final
+#!/usr/bin/env Rscript
+
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(dplyr)
+})
+
+# =========================================================
+# helper: read and filter one pi file
+# =========================================================
+read_pi <- function(path, pop, cat) {
+  df <- read.table(path, header = FALSE, stringsAsFactors = FALSE)
+  colnames(df) <- c("island", "n_valid", "p3", "pi")
+  
+  df$n_valid <- suppressWarnings(as.integer(df$n_valid))
+  df$pi      <- suppressWarnings(as.numeric(df$pi))
+  
+  df <- df[df$n_valid >= 2 & !is.na(df$pi), ]
+  
+  df$pop <- pop
+  df$cat <- cat
+  df
+}
+
+# =========================================================
+# 2-group letters
+# =========================================================
+letters_for_two_groups <- function(group1, group2, pval, alpha = 0.05) {
+  if (is.na(pval)) {
+    out <- data.frame(group = c(group1, group2), letter = c("a", "a"))
+  } else if (pval < alpha) {
+    out <- data.frame(group = c(group1, group2), letter = c("a", "b"))
+  } else {
+    out <- data.frame(group = c(group1, group2), letter = c("a", "a"))
+  }
+  out
+}
+
+# =========================================================
+# 3-category letters: non, hypo, hyper
+# =========================================================
+letters_for_three_groups <- function(p_non_hypo, p_non_hyper, p_hypo_hyper,
+                                     alpha = 0.05,
+                                     labs = c("non", "hypo", "hyper")) {
+  sig12 <- !is.na(p_non_hypo)   && p_non_hypo   < alpha
+  sig13 <- !is.na(p_non_hyper)  && p_non_hyper  < alpha
+  sig23 <- !is.na(p_hypo_hyper) && p_hypo_hyper < alpha
+  
+  letters <- c("a", "a", "a")
+  names(letters) <- labs
+  
+  if (!sig12 && !sig13 && !sig23) {
+    return(data.frame(group = labs, letter = letters, stringsAsFactors = FALSE))
+  }
+  
+  if (sig12 && sig13 && sig23) {
+    letters <- c("a", "b", "c")
+    names(letters) <- labs
+    return(data.frame(group = labs, letter = letters, stringsAsFactors = FALSE))
+  }
+  
+  if (!sig12 && sig13 && sig23) {
+    letters[c("non", "hypo", "hyper")] <- c("a", "a", "b")
+    return(data.frame(group = labs, letter = letters, stringsAsFactors = FALSE))
+  }
+  if (!sig13 && sig12 && sig23) {
+    letters[c("non", "hypo", "hyper")] <- c("a", "b", "a")
+    return(data.frame(group = labs, letter = letters, stringsAsFactors = FALSE))
+  }
+  if (!sig23 && sig12 && sig13) {
+    letters[c("non", "hypo", "hyper")] <- c("a", "b", "b")
+    return(data.frame(group = labs, letter = letters, stringsAsFactors = FALSE))
+  }
+  
+  if (sig12 && !sig13 && !sig23) {
+    letters[c("non", "hypo", "hyper")] <- c("a", "b", "ab")
+    return(data.frame(group = labs, letter = letters, stringsAsFactors = FALSE))
+  }
+  if (sig13 && !sig12 && !sig23) {
+    letters[c("non", "hypo", "hyper")] <- c("a", "ab", "b")
+    return(data.frame(group = labs, letter = letters, stringsAsFactors = FALSE))
+  }
+  if (sig23 && !sig12 && !sig13) {
+    letters[c("non", "hypo", "hyper")] <- c("ab", "a", "b")
+    return(data.frame(group = labs, letter = letters, stringsAsFactors = FALSE))
+  }
+  
+  data.frame(group = labs, letter = c("a", "b", "c"), stringsAsFactors = FALSE)
+}
+
+# =========================================================
+# helper: extract Tukey adjusted p
+# =========================================================
+get_tukey_p <- function(df, comparison_name) {
+  idx <- which(df$comparison == comparison_name)
+  if (length(idx) == 0) return(NA_real_)
+  df$`p adj`[idx[1]]
+}
+
+# =========================================================
+# main function
+# =========================================================
+plot_one_group <- function(base_dir, files, out_prefix, pop_order, pop_colors, label_nudge = NULL) {
+  
+  # -------------------------
+  # read
+  # -------------------------
+  all_df <- data.frame()
+  
+  for (x in files) {
+    fpath <- file.path(base_dir, x$file)
+    if (!file.exists(fpath)) stop("Missing file: ", fpath)
+    tmp <- read_pi(fpath, x$pop, x$cat)
+    all_df <- rbind(all_df, tmp)
+  }
+  
+  all_df$cat <- factor(all_df$cat, levels = c("non", "hypo", "hyper"))
+  all_df$pop <- factor(all_df$pop, levels = pop_order)
+  
+  pop1_name <- pop_order[1]
+  pop2_name <- pop_order[2]
+  
+  # -------------------------
+  # QC
+  # -------------------------
+  qc <- all_df %>%
+    group_by(pop, cat) %>%
+    summarise(
+      n_islands = n(),
+      sum_valid_sites = sum(n_valid, na.rm = TRUE),
+      mean_valid_sites_per_island = mean(n_valid, na.rm = TRUE),
+      median_pi = median(pi, na.rm = TRUE),
+      mean_pi = mean(pi, na.rm = TRUE),
+      max_pi = max(pi, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  message("\n[QC] ", out_prefix)
+  print(qc)
+  
+  # -------------------------
+  # Tukey within pop1
+  # -------------------------
+  sub_pop1 <- all_df[all_df$pop == pop1_name, ]
+  fit_pop1 <- aov(pi ~ cat, data = sub_pop1)
+  tuk_pop1 <- TukeyHSD(fit_pop1)
+  
+  tuk_pop1_df <- as.data.frame(tuk_pop1$cat)
+  tuk_pop1_df$comparison <- rownames(tuk_pop1_df)
+  rownames(tuk_pop1_df) <- NULL
+  tuk_pop1_df$pop <- pop1_name
+  tuk_pop1_df$out_prefix <- out_prefix
+  
+  message("\n[Tukey within ", pop1_name, "] ", out_prefix)
+  print(tuk_pop1_df)
+  
+  # -------------------------
+  # Tukey within pop2
+  # -------------------------
+  sub_pop2 <- all_df[all_df$pop == pop2_name, ]
+  fit_pop2 <- aov(pi ~ cat, data = sub_pop2)
+  tuk_pop2 <- TukeyHSD(fit_pop2)
+  
+  tuk_pop2_df <- as.data.frame(tuk_pop2$cat)
+  tuk_pop2_df$comparison <- rownames(tuk_pop2_df)
+  rownames(tuk_pop2_df) <- NULL
+  tuk_pop2_df$pop <- pop2_name
+  tuk_pop2_df$out_prefix <- out_prefix
+  
+  message("\n[Tukey within ", pop2_name, "] ", out_prefix)
+  print(tuk_pop2_df)
+  
+  # -------------------------
+  # Tukey between pops within category
+  # -------------------------
+  tuk_cat_list <- list()
+  
+  for (cc in levels(all_df$cat)) {
+    sub <- all_df[all_df$cat == cc, ]
+    if (length(unique(sub$pop)) >= 2) {
+      fit_cat <- aov(pi ~ pop, data = sub)
+      tuk_cat <- TukeyHSD(fit_cat)
+      
+      tmp <- as.data.frame(tuk_cat$pop)
+      tmp$comparison <- rownames(tmp)
+      rownames(tmp) <- NULL
+      tmp$cat <- cc
+      tmp$out_prefix <- out_prefix
+      tuk_cat_list[[cc]] <- tmp
+      
+      message("\n[Tukey between pops within category: ", cc, "] ", out_prefix)
+      print(tmp)
+    }
+  }
+  
+  tuk_cat_df <- bind_rows(tuk_cat_list)
+  
+  # -------------------------
+  # letters within pop1
+  # -------------------------
+  p12_1 <- get_tukey_p(tuk_pop1_df, "hypo-non")
+  p13_1 <- get_tukey_p(tuk_pop1_df, "hyper-non")
+  p23_1 <- get_tukey_p(tuk_pop1_df, "hyper-hypo")
+  
+  letters_pop1 <- letters_for_three_groups(
+    p_non_hypo = p12_1,
+    p_non_hyper = p13_1,
+    p_hypo_hyper = p23_1,
+    labs = c("non", "hypo", "hyper")
+  )
+  letters_pop1$pop <- pop1_name
+  
+  # -------------------------
+  # letters within pop2
+  # -------------------------
+  p12_2 <- get_tukey_p(tuk_pop2_df, "hypo-non")
+  p13_2 <- get_tukey_p(tuk_pop2_df, "hyper-non")
+  p23_2 <- get_tukey_p(tuk_pop2_df, "hyper-hypo")
+  
+  letters_pop2 <- letters_for_three_groups(
+    p_non_hypo = p12_2,
+    p_non_hyper = p13_2,
+    p_hypo_hyper = p23_2,
+    labs = c("non", "hypo", "hyper")
+  )
+  letters_pop2$pop <- pop2_name
+  
+  letters_within_pop <- bind_rows(letters_pop1, letters_pop2)
+  colnames(letters_within_pop)[1] <- "cat"
+  
+  # -------------------------
+  # letters between populations within category
+  # -------------------------
+  letters_between_list <- list()
+  
+  for (cc in levels(all_df$cat)) {
+    tmp <- tuk_cat_df[tuk_cat_df$cat == cc, ]
+    if (nrow(tmp) > 0) {
+      pval <- tmp$`p adj`[1]
+      letters2 <- letters_for_two_groups(pop1_name, pop2_name, pval)
+      colnames(letters2)[1] <- "pop"
+      letters2$cat <- cc
+      letters_between_list[[cc]] <- letters2
+    }
+  }
+  
+  letters_between_pop <- bind_rows(letters_between_list)
+  
+  # -------------------------
+  # label table
+  # -------------------------
+  pos_df <- all_df %>%
+    group_by(pop, cat) %>%
+    summarise(y = max(pi, na.rm = TRUE), .groups = "drop")
+  
+  label_df <- pos_df %>%
+    left_join(letters_within_pop, by = c("pop", "cat")) %>%
+    rename(letter_within_pop = letter) %>%
+    left_join(letters_between_pop, by = c("pop", "cat")) %>%
+    rename(letter_between_pop = letter)
+  
+  label_df$label <- paste0(
+    ifelse(is.na(label_df$letter_within_pop), "", label_df$letter_within_pop),
+    "/",
+    ifelse(is.na(label_df$letter_between_pop), "", label_df$letter_between_pop)
+  )
+  
+  global_range <- diff(range(all_df$pi, na.rm = TRUE))
+  if (global_range == 0) global_range <- 0.01
+  
+  # default label position: above each violin max
+  label_df$y_lab <- label_df$y + pmax(0.12 * label_df$y, 0.06 * global_range)
+  
+  # manual label-only nudges
+  if (!is.null(label_nudge)) {
+    label_df <- label_df %>%
+      left_join(label_nudge, by = c("pop", "cat")) %>%
+      mutate(
+        nudge = ifelse(is.na(nudge), 0, nudge),
+        y_lab = y_lab + nudge
+      ) %>%
+      select(-nudge)
+  }
+  
+  # -------------------------
+  # plot
+  # -------------------------
+  dodge_w <- 0.78
+  vio_w   <- 0.72
+  box_w   <- 0.12
+  
+  data_max <- max(all_df$pi, na.rm = TRUE)
+  
+  p <- ggplot(all_df, aes(x = cat, y = pi, fill = pop)) +
+    geom_violin(
+      position  = position_dodge(width = dodge_w),
+      width     = vio_w,
+      trim      = TRUE,
+      scale     = "width",
+      alpha     = 0.90,
+      linewidth = 0.3
+    ) +
+    geom_boxplot(
+      width = box_w,
+      outlier.shape = NA,
+      position = position_dodge(width = dodge_w),
+      linewidth = 0.3
+    ) +
+    geom_text(
+      data = label_df,
+      aes(x = cat, y = y_lab, label = label, group = pop),
+      position = position_dodge(width = dodge_w),
+      inherit.aes = FALSE,
+      size = 4.5,
+      vjust = 0
+    ) +
+    scale_fill_manual(values = pop_colors, breaks = pop_order) +
+    coord_cartesian(
+      ylim = c(min(all_df$pi, na.rm = TRUE), data_max * 1.10),
+      clip = "off"
+    ) +
+    labs(
+      title = NULL,
+      x = NULL,
+      y = "Per-island pi",
+      fill = "Population"
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      legend.position = "top",
+      plot.title = element_blank(),
+      plot.margin = margin(10, 10, 10, 10)
+    )
+  
+  pdf_out <- file.path(base_dir, paste0(out_prefix, ".pdf"))
+  png_out <- file.path(base_dir, paste0(out_prefix, ".png"))
+  qc_out  <- file.path(base_dir, paste0(out_prefix, "_QC.tsv"))
+  tuk_pop1_out <- file.path(base_dir, paste0(out_prefix, "_Tukey_", gsub(" ", "_", pop1_name), "_within.tsv"))
+  tuk_pop2_out <- file.path(base_dir, paste0(out_prefix, "_Tukey_", gsub(" ", "_", pop2_name), "_within.tsv"))
+  tuk_cat_out  <- file.path(base_dir, paste0(out_prefix, "_Tukey_sameCategory_betweenPops.tsv"))
+  letters_out  <- file.path(base_dir, paste0(out_prefix, "_letters.tsv"))
+  
+  print(p)
+  
+  ggsave(filename = pdf_out, plot = p, width = 10, height = 5, useDingbats = FALSE)
+  ggsave(filename = png_out, plot = p, width = 10, height = 5, dpi = 300)
+  
+  message("Saved plot: ", pdf_out)
+  message("Saved plot: ", png_out)
+  
+  write.table(qc, qc_out, sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(tuk_pop1_df, tuk_pop1_out, sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(tuk_pop2_df, tuk_pop2_out, sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(tuk_cat_df, tuk_cat_out, sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(label_df, letters_out, sep = "\t", quote = FALSE, row.names = FALSE)
+  
+  invisible(list(
+    plot = p,
+    qc = qc,
+    tukey_pop1_within = tuk_pop1_df,
+    tukey_pop2_within = tuk_pop2_df,
+    tukey_between_pop_same_cat = tuk_cat_df,
+    letters = label_df,
+    data = all_df
+  ))
+}
+
+# =========================================================
+# colors
+# =========================================================
+pop_palette <- c(
+  "Rabbit Slough" = "#00BFC4",
+  "Sayward"       = "#00BFC4",
+  "Gosling"       = "#F8766D",
+  "Roberts"       = "#F8766D",
+  "Watson"        = "#F8766D",
+  "Wik"           = "#F8766D"
+)
+
+# =========================================================
+# 1) RS vs GOS
+# =========================================================
+base_dir <- "/work/cyu/meth/RSvsGos"
+files <- list(
+  list(pop = "Rabbit Slough", cat = "non",   file = "RS_RSvsGOS_pi_non_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hypo",  file = "RS_RSvsGOS_pi_hypo_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hyper", file = "RS_RSvsGOS_pi_hyper_islands_5k.txt"),
+  list(pop = "Gosling",       cat = "non",   file = "GOS_RSvsGOS_pi_non_islands_5k.txt"),
+  list(pop = "Gosling",       cat = "hypo",  file = "GOS_RSvsGOS_pi_hypo_islands_5k.txt"),
+  list(pop = "Gosling",       cat = "hyper", file = "GOS_RSvsGOS_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_RSvsGOS_5kb_pi_validNge2_splitLetters",
+  pop_order = c("Gosling", "Rabbit Slough"),
+  pop_colors = pop_palette[c("Gosling", "Rabbit Slough")]
+)
+
+# =========================================================
+# 2) RS vs ROB
+# =========================================================
+base_dir <- "/work/cyu/meth/RSvsRob"
+files <- list(
+  list(pop = "Rabbit Slough", cat = "non",   file = "RS_RSvsROB_pi_non_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hypo",  file = "RS_RSvsROB_pi_hypo_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hyper", file = "RS_RSvsROB_pi_hyper_islands_5k.txt"),
+  list(pop = "Roberts",       cat = "non",   file = "ROB_RSvsROB_pi_non_islands_5k.txt"),
+  list(pop = "Roberts",       cat = "hypo",  file = "ROB_RSvsROB_pi_hypo_islands_5k.txt"),
+  list(pop = "Roberts",       cat = "hyper", file = "ROB_RSvsROB_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_RSvsROB_5kb_pi_validNge2_splitLetters",
+  pop_order = c("Roberts", "Rabbit Slough"),
+  pop_colors = pop_palette[c("Roberts", "Rabbit Slough")],
+  label_nudge = data.frame(
+    pop   = c("Roberts", "Rabbit Slough", "Roberts", "Rabbit Slough"),
+    cat   = c("hypo",    "hypo",          "hyper",   "hyper"),
+    nudge = c(0.005,     0.02,           0.05,     0.001)
+  )
+)
+
+# =========================================================
+# 3) RS vs WT
+# =========================================================
+base_dir <- "/work/cyu/meth/RSvsWat"
+files <- list(
+  list(pop = "Rabbit Slough", cat = "non",   file = "RS_RSWGBSWT_pi_non_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hypo",  file = "RS_RSWGBSWT_pi_hypo_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hyper", file = "RS_RSWGBSWT_pi_hyper_islands_5k.txt"),
+  list(pop = "Watson",        cat = "non",   file = "WGBSWT_RSWGBSWT_pi_non_islands_5k.txt"),
+  list(pop = "Watson",        cat = "hypo",  file = "WGBSWT_RSWGBSWT_pi_hypo_islands_5k.txt"),
+  list(pop = "Watson",        cat = "hyper", file = "WGBSWT_RSWGBSWT_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_RSvsWT_5kb_pi_validNge2_splitLetters",
+  pop_order = c("Watson", "Rabbit Slough"),
+  pop_colors = pop_palette[c("Watson", "Rabbit Slough")],
+  label_nudge = data.frame(
+    pop   = c("Watson", "Rabbit Slough", "Watson", "Rabbit Slough"),
+    cat   = c("hypo",   "hypo",          "hyper",  "hyper"),
+    nudge = c(-0.1,     0.05,            0.04,     0.02)
+  )
+)
+
+# =========================================================
+# 4) RS vs WK
+# =========================================================
+base_dir <- "/work/cyu/meth/RSvsWik"
+files <- list(
+  list(pop = "Rabbit Slough", cat = "non",   file = "RS_RSWGBSWK_pi_non_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hypo",  file = "RS_RSWGBSWK_pi_hypo_islands_5k.txt"),
+  list(pop = "Rabbit Slough", cat = "hyper", file = "RS_RSWGBSWK_pi_hyper_islands_5k.txt"),
+  list(pop = "Wik",           cat = "non",   file = "WK_RSWGBSWK_pi_non_islands_5k.txt"),
+  list(pop = "Wik",           cat = "hypo",  file = "WK_RSWGBSWK_pi_hypo_islands_5k.txt"),
+  list(pop = "Wik",           cat = "hyper", file = "WK_RSWGBSWK_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_RSvsWK_5kb_pi_validNge2_splitLetters",
+  pop_order = c("Wik", "Rabbit Slough"),
+  pop_colors = pop_palette[c("Wik", "Rabbit Slough")],
+  label_nudge = data.frame(
+    pop   = c("Wik", "Rabbit Slough", "Wik", "Rabbit Slough"),
+    cat   = c("hypo",   "hypo",          "hyper",  "hyper"),
+    nudge = c(-0.2, 0.2, -0.1, 0.12)
+  )
+)
+
+# =========================================================
+# 5) SAY vs GOS
+# =========================================================
+base_dir <- "/work/cyu/meth/SayvsGos"
+files <- list(
+  list(pop = "Sayward", cat = "non",   file = "SAY_SayGos_pi_non_islands_5k.txt"),
+  list(pop = "Sayward", cat = "hypo",  file = "SAY_SayGos_pi_hypo_islands_5k.txt"),
+  list(pop = "Sayward", cat = "hyper", file = "SAY_SayGos_pi_hyper_islands_5k.txt"),
+  list(pop = "Gosling", cat = "non",   file = "GOS_SayGos_pi_non_islands_5k.txt"),
+  list(pop = "Gosling", cat = "hypo",  file = "GOS_SayGos_pi_hypo_islands_5k.txt"),
+  list(pop = "Gosling", cat = "hyper", file = "GOS_SayGos_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_SAYvsGOS_5kb_pi_validNge2_splitLetters",
+  pop_order = c("Gosling", "Sayward"),
+  pop_colors = pop_palette[c("Gosling", "Sayward")]
+)
+
+# =========================================================
+# 6) SAY vs ROB
+# =========================================================
+base_dir <- "/work/cyu/meth/SayvsRob"
+files <- list(
+  list(pop = "Sayward", cat = "non",   file = "SAY_SayRob_pi_non_islands_5k.txt"),
+  list(pop = "Sayward", cat = "hypo",  file = "SAY_SayRob_pi_hypo_islands_5k.txt"),
+  list(pop = "Sayward", cat = "hyper", file = "SAY_SayRob_pi_hyper_islands_5k.txt"),
+  list(pop = "Roberts", cat = "non",   file = "ROB_SayRob_pi_non_islands_5k.txt"),
+  list(pop = "Roberts", cat = "hypo",  file = "ROB_SayRob_pi_hypo_islands_5k.txt"),
+  list(pop = "Roberts", cat = "hyper", file = "ROB_SayRob_pi_hyper_islands_5k.txt")
+)
+plot_one_group(
+  base_dir = base_dir,
+  files = files,
+  out_prefix = "violin_SAYvsROB_5kb_pi_validNge2_splitLetters",
+  pop_order = c("Roberts", "Sayward"),
+  pop_colors = pop_palette[c("Roberts", "Sayward")]
+)
+
+cat("\nALL DONE\n")
+
+
+
+
+
+
+#nano /work/shared/cyu/meth/NoSNPs_methyl/run_5kb_pi_all.sh
+#!/bin/bash
+set -euo pipefail
+
+BASE="/work/shared/cyu/meth/NoSNPs_methyl"
+GTF_DIR="${BASE}/gtf"
+PI_DIR="${BASE}/pi_out"
+PILEUP_DIR="/work/cyu/meth/pooldata/pileup"
+
+mkdir -p "$GTF_DIR" "$PI_DIR"
+
+cd "$BASE"
+
+echo "Step 1: make 5kb GTF from updated BED files"
+
+python make_all_gtf_5kb.py
+
+echo "Step 2: run Variance-at-position.pl for all 5kb islands"
+
+run_pi () {
+  POP=$1
+  POOLSIZE=$2
+  PILEUP=$3
+  PREFIX=$4
+  GTF_PREFIX=$5
+
+  for CAT in non hypo hyper; do
+    echo "Running ${POP} ${PREFIX} ${CAT}"
+
+    perl Variance-at-position.pl \
+      --pool-size ${POOLSIZE} \
+      --min-qual 20 \
+      --min-coverage 3 \
+      --min-count 2 \
+      --fastq-type sanger \
+      --pileup ${PILEUP_DIR}/${PILEUP} \
+      --gtf ${GTF_DIR}/${GTF_PREFIX}_${CAT}_islands_5kb.gtf \
+      --output ${PI_DIR}/${POP}_${PREFIX}_pi_${CAT}_islands_5k.txt \
+      --measure pi
+  done
+}
+
+# RS vs GOS
+run_pi GOS 400 18_GOS_noYUn.pileup RSvsGOS RSGos
+run_pi RS  400 25_RS_noYUn.pileup  RSvsGOS RSGos
+
+# RS vs ROB
+run_pi ROB 400 19_ROB_noYUn.pileup RSvsROB RSRob
+run_pi RS  400 25_RS_noYUn.pileup  RSvsROB RSRob
+
+# RS vs WT
+run_pi WGBSWT 184 7_WT_noYUn.pileup RSWGBSWT RSWGBSWT
+run_pi RS     400 25_RS_noYUn.pileup RSWGBSWT RSWGBSWT
+
+# RS vs WK
+run_pi WK 198 8_WK_noYUn.pileup RSWGBSWK RSWGBSWK
+run_pi RS 400 25_RS_noYUn.pileup RSWGBSWK RSWGBSWK
+
+# SAY vs GOS
+run_pi SAY 200 17_SAT_noYUn.pileup SayGos SayGos
+run_pi GOS 400 18_GOS_noYUn.pileup SayGos SayGos
+
+# SAY vs ROB
+run_pi SAY 200 17_SAT_noYUn.pileup SayRob SayRob
+run_pi ROB 400 19_ROB_noYUn.pileup SayRob SayRob
+
+echo "Done. Check:"
+echo "find ${PI_DIR} -name '*5k.txt' | wc -l"
+
+
+
+nano /work/shared/cyu/meth/NoSNPs_methyl/make_all_gtf_5kb.py
+#!/usr/bin/env python3
+
+import pandas as pd
+import csv
+import os
+
+BASE = "/work/shared/cyu/meth/NoSNPs_methyl"
+GTF_DIR = os.path.join(BASE, "gtf")
+os.makedirs(GTF_DIR, exist_ok=True)
+
+ISLAND_LEN = 5000
+CATS = ["non", "hypo", "hyper"]
+
+BED_FILES = {
+    "RSGos": "RSGos_CpGs_minDepth5.bed.gz",
+    "RSRob": "RSRob_CpGs_minDepth5.bed.gz",
+    "RSWGBSWT": "RSWGBSWT_CpGs_minDepth5.bed.gz",
+    "RSWGBSWK": "RSWGBSWK_CpGs_minDepth5.bed.gz",
+    "SayGos": "SayGos_CpGs_minDepth5.bed.gz",
+    "SayRob": "SayRob_CpGs_minDepth5.bed.gz",
+}
+
+def make_gtf(prefix, infile):
+    path = os.path.join(BASE, infile)
+    if not os.path.exists(path):
+        print(f"[SKIP] missing {path}")
+        return
+
+    df = pd.read_csv(path, sep=r"\s+", header=0, quotechar='"', compression="gzip")
+
+    if "DMC" in df.columns:
+        df["DMC2"] = df["DMC"].astype(str)
+    elif "result_GS" in df.columns:
+        df["DMC2"] = df["result_GS"].astype(str)
+    else:
+        raise ValueError(f"{infile}: cannot find DMC or result_GS column. Columns: {list(df.columns)}")
+
+    # handle chr like chrI.10005485
+    if df["chr"].astype(str).str.contains(r"\.").any():
+        split_chr = df["chr"].astype(str).str.replace('"', "", regex=False).str.split(".", expand=True)
+        df["chr"] = split_chr[0]
+        if "start" not in df.columns or df["start"].isna().all():
+            df["start"] = split_chr[1].astype(int)
+        else:
+            df["start"] = df["start"].astype(int)
+    else:
+        df["chr"] = df["chr"].astype(str).str.replace('"', "", regex=False)
+        df["start"] = df["start"].astype(int)
+
+    df = df[["chr", "start", "DMC2"]].drop_duplicates()
+
+    print(f"\n{prefix} counts:")
+    print(df["DMC2"].value_counts())
+
+    for cat in CATS:
+        sub = df[df["DMC2"] == cat].copy()
+        if sub.empty:
+            print(f"[{prefix} {cat}] no sites, skip")
+            continue
+
+        sub = sub.sort_values(["chr", "start"])
+        rows = []
+
+        for chrom, g in sub.groupby("chr"):
+            starts = g["start"].tolist()
+            island_idx = 1
+            island_start = starts[0]
+            current_id = f"island{island_idx}_{cat}"
+
+            for pos in starts:
+                if pos - island_start >= ISLAND_LEN:
+                    island_idx += 1
+                    island_start = pos
+                    current_id = f"island{island_idx}_{cat}"
+
+                rows.append([
+                    chrom, "none", "transcript", pos, pos,
+                    ".", "+", ".", f'gene_id "{current_id}";'
+                ])
+
+        out = os.path.join(GTF_DIR, f"{prefix}_{cat}_islands_5kb.gtf")
+        pd.DataFrame(rows).to_csv(
+            out, sep="\t", header=False, index=False,
+            quoting=csv.QUOTE_NONE, escapechar="\\"
+        )
+        print(f"wrote {out}: {len(rows)} rows")
+
+for prefix, infile in BED_FILES.items():
+    make_gtf(prefix, infile)
+    
